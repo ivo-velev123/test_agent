@@ -1,10 +1,16 @@
 # Agent Verifier MCP Server
 
-An MCP server exposing tools so one agent can test and verify another agent's outputs.
+Smarter unit tests for AI agents. Prompt a subject AI, then have a judge agent approve or reject the output based on plain-English criteria — backed by deterministic checks and LLM-as-judge scoring.
 
-## Installation
+```
+your test case
+    └── prompt ──→ Subject AI ──→ response
+                                    ├── deterministic checks (keywords, length, forbidden, JSON schema...)
+                                    └── LLM judge (scores 1–5, pass/fail with reasoning)
+                                              └── PASS / FAIL
+```
 
-Create a uv project and add the dependencies:
+## Setup
 
 ```bash
 uv init agent-verifier
@@ -12,29 +18,97 @@ cd agent-verifier
 uv add "mcp[cli]" httpx jsonschema
 ```
 
-Then copy `server.py` into the project directory.
+Copy `server.py` and `run_tests.py` into the project directory.
 
-## Running
+## Quickstart
 
+**Terminal 1** — start the verifier MCP server:
 ```bash
-# Stdio (for Claude Desktop / Claude Code)
 uv run python server.py
-
-# Streamable HTTP (for remote agents)
-uv run python server.py   # runs on http://localhost:8000/mcp
-
-# Or via the mcp CLI (development mode with inspector)
-uv run mcp dev server.py
+# Listening on http://localhost:8000/mcp
 ```
 
-Add to Claude Code:
+**Terminal 2** — run your test suite:
 ```bash
-claude mcp add --transport http agent-verifier http://localhost:8000/mcp
+uv run python run_tests.py
+```
+
+You'll see output like:
+```
+════════════════════════════════════════════════════════════
+  AI UNIT TEST RUNNER  2024-01-15 14:32:01
+════════════════════════════════════════════════════════════
+
+  TEST: Basic arithmetic explanation
+  → Prompting subject AI...
+  ✉  Subject response (143 words): Floating point numbers are stored in binary...
+  → Running deterministic checks via MCP...
+  ✔  Deterministic checks: all passed
+  → Asking judge to evaluate...
+  ✅ Judge verdict: PASS  (score 4/5)
+     Reasoning: Correctly explains IEEE 754, accessible language, good example.
+
+════════════════════════════════════════════════════════════
+  RESULTS
+════════════════════════════════════════════════════════════
+  ✅ Basic arithmetic explanation  score 4/5
+  ✅ Code generation — reverse a string  score 5/5
+  ❌ Concise factual answer  score 2/5
+       ↳ Judge scored 2/5 — Response mentioned Sydney before correcting itself.
+──────────────────────────────────────────────────────────
+  2/3 passed   1 failed   0 errors
+════════════════════════════════════════════════════════════
+```
+
+Exits with code `1` if any tests fail — works in CI pipelines.
+
+## Development mode (with MCP Inspector)
+
+```bash
+uv run mcp dev server.py
 ```
 
 ---
 
+## Writing test cases
+
+Edit the `TEST_SUITE` list in `run_tests.py`. Each test case has three parts:
+
+```python
+TestCase(
+    name="What shows up in the report",
+    prompt="The exact prompt sent to the subject AI",
+    criteria=(
+        "Plain-English description of what a passing response looks like. "
+        "Be specific — the judge reads this directly."
+    ),
+    checks=[  # optional fast pre-checks before the judge runs
+        {"type": "keywords",  "keywords": ["must", "contain", "these"]},
+        {"type": "length",    "min_words": 50, "max_words": 500},
+        {"type": "forbidden", "forbidden_patterns": ["I cannot", "As an AI"]},
+        {"type": "format",    "must_be_json": True},
+    ],
+)
+```
+
+Deterministic checks run first and are cheap (no LLM call). If they fail, the judge is skipped entirely. This keeps costs low — bad outputs get caught early.
+
+### Supported check types
+
+| type | key args |
+|---|---|
+| `keywords` | `keywords` (list), `require_all` (bool), `case_sensitive` (bool) |
+| `forbidden` | `forbidden_patterns` (list), `use_regex` (bool) |
+| `length` | `min_chars`, `max_chars`, `min_words`, `max_words` |
+| `json_fields` | `required_fields` (list) |
+| `format` | `must_be_json`, `must_start_with`, `must_end_with`, `must_match_regex` |
+| `similarity` | `reference` (str), `threshold` (float, default 0.8) |
+
+---
+
 ## Tools at a Glance
+
+The MCP server also exposes these tools individually — useful if you want to call them from another agent or script:
 
 | Tool | What it checks |
 |---|---|
@@ -49,72 +123,3 @@ claude mcp add --transport http agent-verifier http://localhost:8000/mcp
 | `run_verification_suite` | Run multiple checks in one call |
 | `diff_outputs` | Line-level diff between two agents' responses |
 | `benchmark_agent` | Batch LLM-judged scoring across many prompts |
-
----
-
-## Usage Examples
-
-### Verify a structured JSON response
-```python
-result = await session.call_tool("validate_json_schema", {
-    "output": '{"name": "Alice", "age": 30}',
-    "schema": '{"type": "object", "required": ["name", "age"], "properties": {"name": {"type": "string"}, "age": {"type": "integer"}}}'
-})
-# → {valid: true, errors: [], parsed_output: {...}}
-```
-
-### Check an agent didn't refuse the task
-```python
-result = await session.call_tool("check_no_forbidden_content", {
-    "output": agent_response,
-    "forbidden_patterns": ["I cannot", "I'm unable to", "I don't have access"]
-})
-```
-
-### Run a full verification suite in one shot
-```python
-result = await session.call_tool("run_verification_suite", {
-    "output": agent_response,
-    "checks": [
-        {"type": "keywords",  "keywords": ["summary", "recommendation"]},
-        {"type": "length",    "min_words": 100, "max_words": 800},
-        {"type": "forbidden", "forbidden_patterns": ["I cannot", "sorry"]},
-        {"type": "format",    "must_end_with": "."}
-    ]
-})
-# → {overall_valid: true/false, passed: 3, failed: 1, total: 4, results: [...]}
-```
-
-### LLM-as-judge
-```python
-result = await session.call_tool("llm_judge", {
-    "agent_output": agent_response,
-    "original_prompt": "Summarise the Q3 earnings report in 3 bullet points.",
-    "evaluation_criteria": "Response must contain exactly 3 bullets, each covering revenue, profit, and outlook. Tone should be neutral and factual."
-})
-# → {valid: true, score: 4, reasoning: "...", raw_judge_response: "..."}
-```
-
-### Compare two agents (A/B)
-```python
-result = await session.call_tool("diff_outputs", {
-    "output_a": agent_a_response,
-    "output_b": agent_b_response,
-    "label_a": "GPT-4o",
-    "label_b": "Claude"
-})
-# → {similarity_ratio: 0.73, identical: false, only_in_gpt4o: [...], ...}
-```
-
-### Batch benchmark
-```python
-result = await session.call_tool("benchmark_agent", {
-    "prompts_and_expected": [
-        {"prompt": "What is 2+2?", "expected": "4"},
-        {"prompt": "Capital of France?", "expected": "Paris"},
-    ],
-    "evaluation_criteria": "Answer must be correct, concise, and not include unnecessary caveats.",
-    "agent_outputs": ["The answer is 4.", "It's Paris, the capital city."]
-})
-# → {average_score: 4.5, pass_rate: 1.0, per_item_results: [...]}
-```
