@@ -1,125 +1,210 @@
 # Agent Verifier MCP Server
 
-Smarter unit tests for AI agents. Prompt a subject AI, then have a judge agent approve or reject the output based on plain-English criteria — backed by deterministic checks and LLM-as-judge scoring.
+Smarter unit tests for AI agents. Prompt a subject AI, then have a judge agent score and approve/reject the output based on plain-English criteria.
 
 ```
-your test case
-    └── prompt ──→ Subject AI ──→ response
-                                    ├── deterministic checks (keywords, length, forbidden, JSON schema...)
-                                    └── LLM judge (scores 1–5, pass/fail with reasoning)
-                                              └── PASS / FAIL
+test case
+  └── prompt ──→ Subject AI ──→ response
+                                  └── LLM Judge (scores 0–10, pass/fail + reasoning)
+                                            └── PASS ✅ / FAIL ❌
 ```
 
-## Setup
+---
+
+## Prerequisites
+
+You need **Node.js**, **Python**, and **uv** installed before anything else.
+
+- **Node.js** (v18+): https://nodejs.org
+- **uv**: https://docs.astral.sh/uv/getting-started/installation/
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
+
+---
+
+## Step 1 — Install the Gemini CLI
+
+```bash
+npm install -g @google/gemini-cli
+```
+
+Verify it installed:
+```bash
+gemini --version
+```
+
+---
+
+## Step 2 — Authenticate with Gemini
+
+Run Gemini once interactively to log in:
+```bash
+gemini
+```
+
+This opens a browser and saves your credentials locally. Once you see the prompt, type `/quit` and press Enter to exit. You only need to do this once.
+
+> **Alternative:** If you have a Gemini API key, you can skip the browser login and just set it as an environment variable instead:
+> ```bash
+> export GEMINI_API_KEY=your_key_here
+> ```
+
+---
+
+## Step 3 — Create the project
 
 ```bash
 uv init agent-verifier
 cd agent-verifier
-uv add "mcp[cli]" httpx jsonschema
+uv add "mcp[cli]" httpx
 ```
 
-Copy `server.py` and `run_tests.py` into the project directory.
+---
 
-## Quickstart
+## Step 4 — Add the files
 
-**Terminal 1** — start the verifier MCP server:
+Copy `server.py` and `run_tests.py` into the `agent-verifier` directory you just created. Your folder should look like:
+
+```
+agent-verifier/
+├── server.py
+├── run_tests.py
+└── pyproject.toml    ← created by uv
+```
+
+---
+
+## Step 5 — Run it
+
+You need two terminal windows open, both inside the `agent-verifier` directory.
+
+**Terminal 1 — start the MCP server:**
 ```bash
 uv run python server.py
-# Listening on http://localhost:8000/mcp
 ```
+You should see something like:
+```
+INFO:     Started server process
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+Leave this running.
 
-**Terminal 2** — run your test suite:
+**Terminal 2 — run your tests:**
 ```bash
 uv run python run_tests.py
 ```
 
-You'll see output like:
+You should see output like this:
 ```
 ════════════════════════════════════════════════════════════
   AI UNIT TEST RUNNER  2024-01-15 14:32:01
+  Subject : gemini/gemini-2.0-flash
+  Judge   : gemini/gemini-2.0-flash
 ════════════════════════════════════════════════════════════
 
-  TEST: Basic arithmetic explanation
-  → Prompting subject AI...
-  ✉  Subject response (143 words): Floating point numbers are stored in binary...
-  → Running deterministic checks via MCP...
-  ✔  Deterministic checks: all passed
-  → Asking judge to evaluate...
-  ✅ Judge verdict: PASS  (score 4/5)
-     Reasoning: Correctly explains IEEE 754, accessible language, good example.
+  TEST: Sky colour explanation
+  → Prompting subject AI (gemini/gemini-2.0-flash)...
+  ✉  Response: The sky is blue due to Rayleigh scattering...
+  → Judging (gemini/gemini-2.0-flash)...
+  ✅ PASS  (score 9/10)
+     Correctly mentions Rayleigh scattering in a single sentence.
 
 ════════════════════════════════════════════════════════════
   RESULTS
 ════════════════════════════════════════════════════════════
-  ✅ Basic arithmetic explanation  score 4/5
-  ✅ Code generation — reverse a string  score 5/5
-  ❌ Concise factual answer  score 2/5
-       ↳ Judge scored 2/5 — Response mentioned Sydney before correcting itself.
+  ✅ Sky colour explanation  score 9/10
+  ✅ Basic Python function  score 8/10
+  ✅ Capital city — factual accuracy  score 10/10
 ──────────────────────────────────────────────────────────
-  2/3 passed   1 failed   0 errors
+  3/3 passed   0 failed   0 errors
 ════════════════════════════════════════════════════════════
-```
-
-Exits with code `1` if any tests fail — works in CI pipelines.
-
-## Development mode (with MCP Inspector)
-
-```bash
-uv run mcp dev server.py
 ```
 
 ---
 
-## Writing test cases
+## Writing your own test cases
 
-Edit the `TEST_SUITE` list in `run_tests.py`. Each test case has three parts:
+Open `run_tests.py` and edit the `TEST_SUITE` list. Each test has three parts:
 
 ```python
 TestCase(
     name="What shows up in the report",
-    prompt="The exact prompt sent to the subject AI",
-    criteria=(
-        "Plain-English description of what a passing response looks like. "
-        "Be specific — the judge reads this directly."
-    ),
-    checks=[  # optional fast pre-checks before the judge runs
-        {"type": "keywords",  "keywords": ["must", "contain", "these"]},
-        {"type": "length",    "min_words": 50, "max_words": 500},
-        {"type": "forbidden", "forbidden_patterns": ["I cannot", "As an AI"]},
-        {"type": "format",    "must_be_json": True},
-    ],
-)
+    prompt="The exact prompt sent to the AI being tested",
+    criteria="Plain-English rules the judge uses to pass or fail the response.",
+),
 ```
 
-Deterministic checks run first and are cheap (no LLM call). If they fail, the judge is skipped entirely. This keeps costs low — bad outputs get caught early.
+For example:
+```python
+TestCase(
+    name="Haiku about rain",
+    prompt="Write a haiku about rain.",
+    criteria=(
+        "Must follow the 5-7-5 syllable structure. "
+        "Must be about rain. "
+        "Must not rhyme."
+    ),
+),
+```
 
-### Supported check types
-
-| type | key args |
-|---|---|
-| `keywords` | `keywords` (list), `require_all` (bool), `case_sensitive` (bool) |
-| `forbidden` | `forbidden_patterns` (list), `use_regex` (bool) |
-| `length` | `min_chars`, `max_chars`, `min_words`, `max_words` |
-| `json_fields` | `required_fields` (list) |
-| `format` | `must_be_json`, `must_start_with`, `must_end_with`, `must_match_regex` |
-| `similarity` | `reference` (str), `threshold` (float, default 0.8) |
+Be as specific as you like in `criteria` — the judge reads it directly.
 
 ---
 
-## Tools at a Glance
+## Switching to a different AI provider
 
-The MCP server also exposes these tools individually — useful if you want to call them from another agent or script:
+At the top of `run_tests.py` you can change which AI is being tested and which AI does the judging:
 
-| Tool | What it checks |
+```python
+SUBJECT_PROVIDER = "gemini"        # the AI being tested
+SUBJECT_MODEL    = "gemini-2.0-flash"
+
+JUDGE_PROVIDER   = "gemini"        # the AI doing the judging
+JUDGE_MODEL      = "gemini-2.0-flash"
+```
+
+You can mix and match — for example, test an Ollama model and judge it with Gemini:
+```python
+SUBJECT_PROVIDER = "ollama"
+SUBJECT_MODEL    = "llama3"
+
+JUDGE_PROVIDER   = "gemini"
+JUDGE_MODEL      = "gemini-2.0-flash"
+```
+
+### Supported providers
+
+| Provider | How to set up |
 |---|---|
-| `validate_json_schema` | Agent JSON output against a JSON Schema |
-| `check_required_fields` | All expected keys present in JSON output |
-| `check_contains_keywords` | Required keywords/phrases present in text |
-| `check_no_forbidden_content` | Forbidden strings/regex absent from output |
-| `measure_similarity` | Fuzzy match ratio vs a reference answer |
-| `check_output_length` | Character and word count bounds |
-| `check_format_rules` | Starts/ends with, matches regex, valid JSON |
-| `llm_judge` | LLM-as-judge scoring (1–5) with reasoning |
-| `run_verification_suite` | Run multiple checks in one call |
-| `diff_outputs` | Line-level diff between two agents' responses |
-| `benchmark_agent` | Batch LLM-judged scoring across many prompts |
+| `gemini` | Follow Steps 1–2 above |
+| `anthropic` | `export ANTHROPIC_API_KEY=your_key` |
+| `openai` | `export OPENAI_API_KEY=your_key` |
+| `ollama` | Install from [ollama.com](https://ollama.com), run `ollama pull llama3` |
+
+### Model name reference
+
+| Provider | Example models |
+|---|---|
+| `gemini` | `gemini-2.0-flash`, `gemini-1.5-pro` |
+| `anthropic` | `claude-sonnet-4-20250514`, `claude-haiku-4-5-20251001` |
+| `openai` | `gpt-4o`, `gpt-4o-mini` |
+| `ollama` | `llama3`, `gemma3:27b`, `mistral` |
+
+---
+
+## Troubleshooting
+
+**`gemini: command not found`**
+The Gemini CLI isn't on your PATH. Try closing and reopening your terminal after installing, or run `npm install -g @google/gemini-cli` again.
+
+**`Connection refused` when running `run_tests.py`**
+The MCP server isn't running. Make sure Terminal 1 is still running `uv run python server.py`.
+
+**`Please set an Auth method...`**
+You haven't authenticated the Gemini CLI yet. Go back to Step 2.
+
+**Tests hang for a long time**
+Normal for the first run — the Gemini CLI has a small startup cost. Subsequent calls are faster.
