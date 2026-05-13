@@ -92,7 +92,7 @@ TEST_SUITE: list[TestCase] = [
         prompt="What is the third word in this sentence?",
         criteria=(
             "Must state that the word is 'the'."
-            "Must NOT say any other word."
+            "Must NOT say that any other word other than 'the' is the third word in the sentence."
         )
     ),
 ]
