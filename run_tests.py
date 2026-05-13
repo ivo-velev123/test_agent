@@ -79,6 +79,22 @@ TEST_SUITE: list[TestCase] = [
             "Must be a single sentence."
         ),
     ),
+    TestCase(
+        name="How many 'r's in the word 'strawberry'?",
+        prompt="How many 'r's in the word 'strawberry'?",
+        criteria=(
+            "Must state that there are 3 'r's in the word 'strawberry'."
+            "Must NOT say any other number."
+        )
+    ),
+    TestCase(
+        name="What is the third word in this sentence?",
+        prompt="What is the third word in this sentence?",
+        criteria=(
+            "Must state that the word is 'the'."
+            "Must NOT say any other word."
+        )
+    ),
 ]
 
 
